@@ -1,0 +1,443 @@
+---
+title: |
+  | Final Project
+  | DS 805: Statistical Learning
+author: |
+  | Dikshant Joshi, Naveen Kumar Krishnasamy, Rakesh Kumar Nethi
+output: html_document
+---
+
+## Data Requirements:
+
+- You can pick any data you want as long as it is a classification problem.
+- Some sources are:
+
+    - Kaggle <https://www.kaggle.com/datasets?tags=13302-Classification>
+    - UCI Machine Learning Repository <https://archive.ics.uci.edu/ml/datasets.php?format=&task=cla&att=&area=&numAtt=&numIns=&type=&sort=nameUp&view=table>
+    
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(MASS)
+library(forecast) 
+library(ggplot2)
+library(ggfortify)
+library(kableExtra)
+library(caret)
+library(class)
+library(dplyr)
+library(formatR)
+library(rpart)
+library(rpart.plot)
+library(regclass)
+
+```
+
+- Read your data in R and call it df. For the rest of this document `y` refers to the variable you are predicting.
+
+```{r}
+df = read.table("F:/UNH/Spring-22/Statistical Learning/Final Project/New dataset/Train.csv", header=TRUE, sep=",")
+head(df)
+
+```
+
+## The grading rubric can be found below:
+
++----------------+---------------+--------------------+-----------------------+
+|                | R code        | Decision/Why       | Communication         |
+|                |               |                    |  of findings          |
++================+===============+====================+=======================+
+| Percentage of  | 30%           | 35%                | 35%                   |
+| Assigned Points|               |                    |                       |
++----------------+---------------+--------------------+-----------------------+
+
+
+- **Decision/why?**: Explain your reasoning behind your choice of the procedure, set of variables and such for the question. 
+
+    - Explain why you use the procedure/model/variable
+    - To exceed this criterion, describe steps taken to implement the procedure in a non technical way.
+
+
+- **Communication of your findings**: Explain your results in terms of training MSE, testing MSE, and prediction of the variable `Y` 
+
+    - Explain why you think one model is better than the other.
+    - To exceed this criterion, explain your model and how it predicts `y` in a non technical way.
+
+
+## Part 1: Exploratory Data Analysis (20 points)
+
+1. Check for existence of NA's (missing data)
+
+```{r}
+newdata_df<-df[complete.cases(df),]
+
+nrow(df) == nrow(df[complete.cases(df),])
+c(nrow(newdata_df),nrow(df))
+
+
+```
+#Yes, there is some existence of the NA's in our dataset and we 
+
+2. If necessary, classify all categorical variables **except the one you are predicting** as factors. Calculate the summary statistics of the entire data set. 
+
+```{r}
+summary(newdata_df)
+str(newdata_df)
+```
+
+
+```{r}
+df<-df[-1]
+colnames(df)[11]<-"Delivered_Ontime"
+newdata_df<-df
+newdata_df$Delivered_Ontime[df$Delivered_Ontime=="1"]<-"Yes"
+newdata_df$Delivered_Ontime[df$Delivered_Ontime=="0"]<-"No"
+df$Delivered_Ontime<-as.factor(df$Delivered_Ontime)
+```
+
+3. For the numerical variables, plot box plots based on values of `y`. Do you see a difference between the box plots for any of the variables you choose?
+
+```{r}
+#BoxPlot
+boxplot(Discount_offered~Delivered_Ontime,data=newdata_df)
+boxplot(Cost_of_the_Product~Delivered_Ontime,data=newdata_df)
+boxplot(Prior_purchases~Delivered_Ontime,data=newdata_df)
+boxplot(Weight_in_gms~Delivered_Ontime,data=newdata_df)
+```
+Yes, we observe that the boxplots of delivery status with different variables are different. For the Discount offered variable, we could see that the highly discounted products are seems to be delivered on time and almost all late delivered products are discounted less.
+But when we look at the cost of the products that were delivered, both on-time and late delivered shipments have same upper and lower quartile of cost.
+When we look at the weight of the products, we could see that late delivered shipments had more weight (average weight of late delivered is closer to 5000gm while on time delivered where near to 3000gm)
+
+
+4. For the categorical variables, plot bar charts for the different values of `y`. Do you see a difference between plots for any of the variables you choose?
+
+```{r}
+#Barplots 
+newdata_df$Warehouse_block <- as.factor(df$Warehouse_block)
+ggplot(df, aes(x =  Warehouse_block, fill = Delivered_Ontime)) +
+  labs(title = "Delivery Status by Mode of Shipment", x="Warehouse Blocks", y="# Deliveries")+
+  geom_bar(position=position_dodge())
+
+
+newdata_df$Warehouse_block <- as.factor(df$Mode_of_Shipment)
+ggplot(df, aes(x =  Mode_of_Shipment, fill = Delivered_Ontime)) +
+  labs(title = "Delivery Status by Mode of Shipment", x="Mode of Shipment", y="# Deliveries")+
+  geom_bar(position=position_dodge())
+
+
+ggplot(newdata_df, aes(x = Customer_care_calls , fill = Delivered_Ontime)) +
+  labs(title = "Delivery Status by customer care calls", x="# Customer care calls ", y="# Deliveries")+
+  geom_bar(position=position_dodge())
+
+
+ggplot(newdata_df, aes(x = Customer_rating , fill = Delivered_Ontime)) +
+  labs(title = "Delivery Status by Customer ratings", x="Customer ratings ", y="# Deliveries")+
+  geom_bar(position=position_dodge())
+
+ggplot(newdata_df, aes(x = Product_importance , fill = Delivered_Ontime)) +
+  labs(title = "Delivery Status by Product Importance", x="Product Priority ", y="# Deliveries")+
+  geom_bar(position=position_dodge())
+
+ggplot(df, aes(x = Gender , fill = Delivered_Ontime)) +
+  labs(title = "Delivery Status by Gender", x="Gender ", y="# Deliveries")+
+  geom_bar(position=position_dodge())
+
+```
+Bar charts also shows the difference in delivery status by the variables. When we see mode of shipment, we could see that most shipments were carried by ship and on-time delivery is higher than late deliveries.
+When we observe the delivery status by priority, how and medium prioritized shipments seem to have higher late deliveries (more than 50% of on-time) when compared to high prioritized shipments. Delivery status by customer ratings doesn't seem to provide much information as the highest rated and lowest rated deliveries seems to have same proportion of on-time and late deliveries, implies some other factors could have affected the customer ratings.
+
+
+6. Test/training separation: Separate your data into 80% training and 20% testing data. Do not forget to set seed. Please use the same separation for the whole assignment, as it is needed to be able to compare the models.
+
+
+```{r}
+
+## 80% of the sample size for training set
+smp_size=floor(0.8 * nrow(df))
+
+## set the seed to make your partition reproducible
+set.seed(1994)
+train_ind=sample(seq_len(nrow(df)), size = smp_size)
+
+train_df=df[train_ind, ]
+test_df=df[-train_ind, ]
+
+nrow(train_df)
+nrow(test_df)
+```
+
+
+
+## Part 2: Logistic Regression or LDA (15 points)
+
+1. Develop a classification model where the variable `y` is the dependent variable using the Logistic Regression or LDA, rest of the variables, and your training data set.
+
+```{r}
+#Logistic Regression
+logfit<-glm(Delivered_Ontime~., data=train_df, family=binomial)
+summary(logfit)
+
+```
+
+
+2.  Obtain the confusion matrix and compute the **testing error rate** based on the logistic regression classification.
+
+```{r}
+logprob<- predict(logfit, newdata = test_df, type = "response")
+head(logprob,3)
+
+logpred=rep(0, nrow(test_df))
+logpred[logprob>=.5]=1
+logpred=as.factor(logpred)
+head(logpred,3)
+
+#confusion Matrix
+cm=confusionMatrix(data=logpred, reference=test_df$Delivered_Ontime)
+cm
+
+```
+
+```{r}
+#testing error
+round( mean(logpred!=test_df[,"Delivered_Ontime"]),4)
+```
+Logistics Regression model has an accuracy of 64.41%
+#LDA
+```{r}
+#library(MASS)
+#lda_m = lda(Delivered_Ontime~., data=train_df)
+#lda_m
+
+```
+
+```{r}
+#plot(lda_m)
+```
+
+```{r}
+#lda.pred = predict(lda_m, newdata=test_df)
+
+#confusion matrix
+#table(test_df$Delivered_Ontime, lda.pred$class)
+#error rate
+#1 - mean(test_df$Delivered_Ontime==lda.pred$class)
+```
+
+LDA model has an accuracy of 64.73% 
+
+3. Explain your choices and communicate your results.
+
+
+## Part 3: KNN (15 points)
+
+1. Apply a KNN classification to the training data using.
+
+```{r}
+head(train_df,5)
+
+train_knn<-train_df
+test_knn<-test_df
+
+#converting categorical variables in factors of numeric for KNN (train_knn & test_knn)
+
+######## Train dataset for Knn
+#Gender: M=0, F=1
+train_knn[,"Gender"]=ifelse(train_df[,"Gender"] == "M", 0, 1)
+train_knn[,"Gender"]=as.factor(train_knn[,"Gender"])
+
+#Warehouse Block: A=1, B=2, C=3, D=4, E=5, F=6
+train_knn[,"Warehouse_block"]=ifelse(train_df[,"Warehouse_block"] == "A", 1, ifelse(train_df[,"Warehouse_block"] == "B",2, ifelse( train_df[,"Warehouse_block"] == "C",3,ifelse(train_df[,"Warehouse_block"] == "D",4,ifelse(train_df[,"Warehouse_block"] == "E",5,6)))))
+train_knn[,"Warehouse_block"]=as.factor(train_knn[,"Warehouse_block"])
+
+
+#Mode of Shipment: Ship=1, Road=2, Flight=3
+train_knn[,"Mode_of_Shipment"]=ifelse(train_df[,"Mode_of_Shipment"] == "Ship", 1, ifelse(train_df[,"Mode_of_Shipment"] == "Road",2,3))
+train_knn[,"Mode_of_Shipment"]=as.factor(train_knn[,"Mode_of_Shipment"])
+
+#Product_importance: low=1, medium=2, high=3
+train_knn[,"Product_importance"]=ifelse(train_df[,"Product_importance"] == "low", 1, ifelse(train_df[,"Product_importance"] == "medium",2,3))                                         
+train_knn[,"Product_importance"]=as.factor(train_knn[,"Product_importance"])
+
+train_knn[,"Customer_rating"]=as.factor(train_knn[,"Customer_rating"])
+
+
+
+######## Test dataset for Knn
+#Gender: M=0, F=1
+test_knn[,"Gender"]=ifelse(test_df[,"Gender"] == "M", 0, 1)
+test_knn[,"Gender"]=as.factor(test_knn[,"Gender"])
+
+#Warehouse Block: A=1, B=2, C=3, D=4, E=5, F=6
+test_knn[,"Warehouse_block"]=ifelse(test_df[,"Warehouse_block"] == "A", 1, ifelse(test_df[,"Warehouse_block"] == "B",2, ifelse( test_df[,"Warehouse_block"] == "C",3,ifelse(test_df[,"Warehouse_block"] == "D",4,ifelse(test_df[,"Warehouse_block"] == "E",5,6)))))
+test_knn[,"Warehouse_block"]=as.factor(test_knn[,"Warehouse_block"])
+
+#Mode of Shipment: Ship=1, Road=2, Flight=3
+test_knn[,"Mode_of_Shipment"]=ifelse(test_df[,"Mode_of_Shipment"] == "Ship", 1, ifelse(test_df[,"Mode_of_Shipment"] == "Road",2,3))
+test_knn[,"Mode_of_Shipment"]=as.factor(test_knn[,"Mode_of_Shipment"])
+
+#Product_importance: low=1, medium=2, high=3
+test_knn[,"Product_importance"]=ifelse(test_df[,"Product_importance"] == "low", 1, ifelse(test_df[,"Product_importance"] == "medium",2,3))                                         
+test_knn[,"Product_importance"]=as.factor(test_knn[,"Product_importance"])
+
+test_knn[,"Customer_rating"]=as.factor(test_knn[,"Customer_rating"])
+
+```
+
+```{r}
+knn.train=train_knn[,1:11]
+knn.test=test_knn[,1:11]
+knn.trainLabels=train_knn[,"Delivered_Ontime"]
+knn.testLabels=test_knn[,"Delivered_Ontime"]
+
+#KNN model with k=3
+knn1 <- knn(train = knn.train, test = knn.test, cl = knn.trainLabels, k=12)
+
+```
+
+```{r}
+plot(knn1)
+```
+
+2.  Obtain the confusion matrix and compute the testing error rate based on the KNN classification.
+```{r}
+#confusion Matrix
+confusionMatrix(data=as.factor(knn1), reference=as.factor(knn.testLabels))
+
+1-mean(knn1==knn.testLabels)
+```
+KNN with k value 12 was picked randomly on trial & error basis and found to give better accuracy 66.36 (lover error=33.63%) 
+
+```{r}
+#train_knn$Delivered_Ontime<-as.numeric(train_knn$Delivered_Ontime)
+#test_knn$Delivered_Ontime<-as.numeric(test_knn$Delivered_Ontime)
+
+#train_knn[,"Customer_rating"]=as.numeric(train_knn[,"Customer_rating"])
+#train_knn[,"Product_importance"]=as.numeric(train_knn[,"Product_importance"])
+#train_knn[,"Mode_of_Shipment"]=as.numeric(train_knn[,"Mode_of_Shipment"])
+#train_knn[,"Warehouse_block"]=as.numeric(train_knn[,"Warehouse_block"])
+#train_knn[,"Gender"]=as.numeric(train_knn[,"Gender"])
+
+
+#test_knn[,"Customer_rating"]=as.numeric(test_knn[,"Customer_rating"])
+#test_knn[,"Product_importance"]=as.numeric(test_knn[,"Product_importance"])
+#test_knn[,"Mode_of_Shipment"]=as.numeric(test_knn[,"Mode_of_Shipment"])
+#test_knn[,"Warehouse_block"]=as.numeric(test_knn[,"Warehouse_block"])
+#test_knn[,"Gender"]=as.numeric(test_knn[,"Gender"])
+
+
+set.seed(1994)
+k.grid=1:100
+error=rep(0, length(k.grid))
+knn.train=train_knn[,1:11]
+knn.test=test_knn[,1:11]
+for (i in seq_along(k.grid)) {
+  pred = knn(train = knn.train, 
+             test  = knn.test, 
+             cl    = knn.trainLabels, 
+             k     = k.grid[i])
+  error[i] = mean(knn.testLabels !=pred)
+}
+
+min(error)
+
+```
+
+```{r}
+plot(error, type = "b", col = "dodgerblue", cex = 1, pch = 20, 
+     xlab = "k, number of neighbors", ylab = "classification error")
+# add line for min error seen
+abline(h = min(error), col = "darkorange", lty = 3)
+
+```
+
+3. Explain your choices and communicate your results.
+
+
+## Part 4: Tree Based Model (15 points)
+
+1. Apply one of the following models to your training data: *Classification Tree, Random Forrest, Bagging or Boosting*
+
+```{r}
+#random Forest
+library(randomForest)
+set.seed(1994)
+fit.forest <- randomForest(Delivered_Ontime ~., data = train_df, importance=TRUE,proximity=TRUE)
+fit.forest
+
+```
+
+```{r}
+head(fit.forest$importance,3)
+
+#OOB error matrix
+err= fit.forest$err.rate
+
+head(err)
+
+```
+
+2. Obtain the confusion matrix and compute the testing error rate based on your chosen tree based model.
+
+```{r}
+pred.rf= predict(fit.forest, newdata = test_df, type = "class")
+# Calculate the confusion matrix for the test set
+confusionMatrix(data = pred.rf, reference = test_df$Delivered_Ontime)
+```
+We performed Random Forest model and the model gave us 65.09% accuracy for the prediction made.
+
+3. Explain your choices and communicate your results.
+
+
+## Part 5: SVM (15 points)
+
+1. Apply a SVM model to your training data.
+
+```{r}
+library(e1071)
+svm_model<- svm(Delivered_Ontime ~., data = train_df)
+svm_model
+
+
+svm_plot=ggplot(data = train_df, aes(x = train_df, y = svm_model, color = y)) + 
+    geom_point() + 
+    scale_color_manual(values = c("red", "blue")) + 
+    geom_point(data = train_df[svm_model$index, ], aes(x = x1, y = x2), color = "purple", size = 4, alpha = 0.5)
+
+svm_plot
+
+```
+
+
+2. Calculate the confusion matrix using the testing data.
+
+```{r}
+pred.svm <- predict(svm_model, test_df)
+cm.svm <- table(test_df$Delivered_Ontime, pred.svm, 
+                dnn = c("True", "Pred"))
+
+cm.svm
+
+#accuracy
+mean(pred.svm==test_df$Delivered_Ontime)
+
+#plot(svm_model,train_df)
+```
+
+
+3. Explain your choices and communicate your results.
+
+```{r}
+
+```
+
+
+## Part 6: Conclusion (20 points)
+
+1. (10 points) Based on the different classification models, which one do you think is the best model to predict `y`? Please consider the following in your response:
+
+    - Accuracy/error rates
+    - Do you think you can improve the model by adding any other information?
+    
+2. (10 points) What are your learning outcomes for this assignment? Please focus on your learning outcomes in terms of statistical learning, model interpretations, and R skills - it is up to you to include this part in your presentation or not.
+
+
