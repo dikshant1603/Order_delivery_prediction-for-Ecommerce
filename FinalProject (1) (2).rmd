@@ -30,15 +30,17 @@ library(formatR)
 library(rpart)
 library(rpart.plot)
 library(regclass)
-
+library(caret)
+library(glmnet)
 ```
 
 - Read your data in R and call it df. For the rest of this document `y` refers to the variable you are predicting.
 
 ```{r}
-df = read.table("F:/UNH/Spring-22/Statistical Learning/Final Project/New dataset/Train.csv", header=TRUE, sep=",")
+df = read.table("C:/Users/HP/Downloads/Train.csv", header=TRUE, sep=",")
 head(df)
-
+df<-df[-1]
+colnames(df)[11]<-"Delivered_Ontime"
 ```
 
 ## The grading rubric can be found below:
@@ -74,7 +76,7 @@ newdata_df<-df[complete.cases(df),]
 nrow(df) == nrow(df[complete.cases(df),])
 c(nrow(newdata_df),nrow(df))
 
-
+sum(is.na(df))
 ```
 #Yes, there is some existence of the NA's in our dataset and we 
 
@@ -87,8 +89,6 @@ str(newdata_df)
 
 
 ```{r}
-df<-df[-1]
-colnames(df)[11]<-"Delivered_Ontime"
 newdata_df<-df
 newdata_df$Delivered_Ontime[df$Delivered_Ontime=="1"]<-"Yes"
 newdata_df$Delivered_Ontime[df$Delivered_Ontime=="0"]<-"No"
@@ -99,10 +99,30 @@ df$Delivered_Ontime<-as.factor(df$Delivered_Ontime)
 
 ```{r}
 #BoxPlot
-boxplot(Discount_offered~Delivered_Ontime,data=newdata_df)
-boxplot(Cost_of_the_Product~Delivered_Ontime,data=newdata_df)
-boxplot(Prior_purchases~Delivered_Ontime,data=newdata_df)
-boxplot(Weight_in_gms~Delivered_Ontime,data=newdata_df)
+boxplot(Discount_offered~Delivered_Ontime,data=newdata_df, col='lightblue')
+boxplot(Cost_of_the_Product~Delivered_Ontime,data=newdata_df, col='lightblue')
+boxplot(Prior_purchases~Delivered_Ontime,data=newdata_df, col='lightblue')
+boxplot(Weight_in_gms~Delivered_Ontime,data=newdata_df, col='lightblue')
+
+# donut chart
+newdata_df%>%
+  group_by(Delivered_Ontime)%>%
+  summarise(Count=n())%>%
+  mutate(Delivered_Ontime=as.factor(Delivered_Ontime),percentage=round(Count/sum(Count)*100,2),ymax =cumsum(percentage),ymin = c(0, head(ymax, n=-1)),LabelPosition = (ymax + ymin)/2, label = paste0(Delivered_Ontime, "\n value: ", Count, "\n", percentage,"%"))%>%
+           ggplot(aes(ymax=ymax, ymin=ymin, xmax=4, xmin=3, fill=Delivered_Ontime)) +
+  geom_rect() +
+  geom_label(x=4, aes(y=LabelPosition, label=label), size=4) +
+  scale_fill_brewer(palette=4) +
+  coord_polar(theta="y") +
+  xlim(c(2, 4)) +
+  theme_void()+
+  labs(title = "Delivered Ontime (Yes/No)", x = "X-axis Label", y = "Y-axis Label")+
+  theme(legend.position = "none")
+
+#density plot
+ggplot(newdata_df, aes(x = Weight_in_gms, fill = Delivered_Ontime)) +
+  geom_density(alpha = 0.5) +
+  labs(title = "Density Plot of Weight Distribution by Delivery Stat1us")
 ```
 Yes, we observe that the boxplots of delivery status with different variables are different. For the Discount offered variable, we could see that the highly discounted products are seems to be delivered on time and almost all late delivered products are discounted less.
 But when we look at the cost of the products that were delivered, both on-time and late delivered shipments have same upper and lower quartile of cost.
@@ -113,16 +133,66 @@ When we look at the weight of the products, we could see that late delivered shi
 
 ```{r}
 #Barplots 
-newdata_df$Warehouse_block <- as.factor(df$Warehouse_block)
-ggplot(df, aes(x =  Warehouse_block, fill = Delivered_Ontime)) +
-  labs(title = "Delivery Status by Mode of Shipment", x="Warehouse Blocks", y="# Deliveries")+
-  geom_bar(position=position_dodge())
+library(dplyr)
+total_counts <- newdata_df %>%
+  group_by(Warehouse_block) %>%
+  summarize(TotalCount = n())
+
+# Calculate percentages within each combination of Warehouse_block and Delivered_Ontime
+df_percent <- newdata_df %>%
+  group_by(Warehouse_block, Delivered_Ontime) %>%
+  summarize(Count = n()) %>%
+  left_join(total_counts, by = "Warehouse_block") %>%
+  mutate(Percent = Count / TotalCount * 100)
+
+# Create a clustered bar plot with percentage labels
+ggplot(df_percent, aes(x = Warehouse_block, y = Count, fill = Delivered_Ontime)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_text(aes(label = sprintf("%.1f%%", Percent),
+                y = Count),  # Adjust the y-coordinate for text placement
+            position = position_dodge(width = 0.9),
+            vjust = -0.5,
+            size = 3) +  # Adjust the size of the text as needed
+  labs(title = "Delivery Status by Warehouse Block",
+       x = "Warehouse Blocks",
+       y = "Total Deliveries") +
+  theme_minimal()
 
 
-newdata_df$Warehouse_block <- as.factor(df$Mode_of_Shipment)
-ggplot(df, aes(x =  Mode_of_Shipment, fill = Delivered_Ontime)) +
-  labs(title = "Delivery Status by Mode of Shipment", x="Mode of Shipment", y="# Deliveries")+
-  geom_bar(position=position_dodge())
+#newdata_df$Warehouse_block <- as.factor(df$Warehouse_block)
+#ggplot(df, aes(x =  Warehouse_block, fill = Delivered_Ontime)) +
+#  labs(title = "Delivery Status by Mode of Shipment", x="Warehouse Blocks", y="# Deliveries")+
+#  geom_bar(position=position_dodge())
+
+
+total_counts <- newdata_df %>%
+  group_by(Mode_of_Shipment) %>%
+  summarize(TotalCount = n())
+
+# Calculate percentages within each combination of Warehouse_block and Delivered_Ontime
+df_percent <- newdata_df %>%
+  group_by(Mode_of_Shipment, Delivered_Ontime) %>%
+  summarize(Count = n()) %>%
+  left_join(total_counts, by = "Mode_of_Shipment") %>%
+  mutate(Percent = Count / TotalCount * 100)
+
+# Create a clustered bar plot with percentage labels
+ggplot(df_percent, aes(x = Mode_of_Shipment, y = Count, fill = Delivered_Ontime)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_text(aes(label = sprintf("%.1f%%", Percent),
+                y = Count),  # Adjust the y-coordinate for text placement
+            position = position_dodge(width = 0.9),
+            vjust = -0.5,
+            size = 3) +  # Adjust the size of the text as needed
+  labs(title = "Delivery Status by Mode of Shipment",
+       x = "Mode of Shipment",
+       y = "Total Deliveries") +
+  theme_minimal()
+
+#newdata_df$Warehouse_block <- as.factor(df$Mode_of_Shipment)
+#ggplot(df, aes(x =  Mode_of_Shipment, fill = Delivered_Ontime)) +
+#  labs(title = "Delivery Status by Mode of Shipment", x="Mode of Shipment", y="# Deliveries")+
+#  geom_bar(position=position_dodge())
 
 
 ggplot(newdata_df, aes(x = Customer_care_calls , fill = Delivered_Ontime)) +
@@ -134,9 +204,34 @@ ggplot(newdata_df, aes(x = Customer_rating , fill = Delivered_Ontime)) +
   labs(title = "Delivery Status by Customer ratings", x="Customer ratings ", y="# Deliveries")+
   geom_bar(position=position_dodge())
 
-ggplot(newdata_df, aes(x = Product_importance , fill = Delivered_Ontime)) +
-  labs(title = "Delivery Status by Product Importance", x="Product Priority ", y="# Deliveries")+
-  geom_bar(position=position_dodge())
+total_counts <- newdata_df %>%
+  group_by(Product_importance) %>%
+  summarize(TotalCount = n())
+
+# Calculate percentages within each combination of Warehouse_block and Delivered_Ontime
+df_percent <- newdata_df %>%
+  group_by(Product_importance, Delivered_Ontime) %>%
+  summarize(Count = n()) %>%
+  left_join(total_counts, by = "Product_importance") %>%
+  mutate(Percent = Count / TotalCount * 100)
+
+# Create a clustered bar plot with percentage labels
+ggplot(df_percent, aes(x = Product_importance, y = Count, fill = Delivered_Ontime)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_text(aes(label = sprintf("%.1f%%", Percent),
+                y = Count),  # Adjust the y-coordinate for text placement
+            position = position_dodge(width = 0.9),
+            vjust = -0.5,
+            size = 3) +  # Adjust the size of the text as needed
+  labs(title = "Delivery Status by Product importance",
+       x = "Mode of Shipment",
+       y = "Total Deliveries") +
+  theme_minimal()
+
+
+#ggplot(newdata_df, aes(x = Product_importance , fill = Delivered_Ontime)) +
+#  labs(title = "Delivery Status by Product Importance", x="Product Priority ", y="# Deliveries")+
+#  geom_bar(position=position_dodge())
 
 ggplot(df, aes(x = Gender , fill = Delivered_Ontime)) +
   labs(title = "Delivery Status by Gender", x="Gender ", y="# Deliveries")+
@@ -151,16 +246,14 @@ When we observe the delivery status by priority, how and medium prioritized ship
 
 
 ```{r}
-
-## 80% of the sample size for training set
-smp_size=floor(0.8 * nrow(df))
+## 70% of the sample size for training set
+df$Delivered_Ontime=as.factor(df$Delivered_Ontime)
 
 ## set the seed to make your partition reproducible
-set.seed(1994)
-train_ind=sample(seq_len(nrow(df)), size = smp_size)
-
-train_df=df[train_ind, ]
-test_df=df[-train_ind, ]
+set.seed(123)
+index=createDataPartition(df$Delivered_Ontime,p=0.7,list=FALSE)
+train_df=df[index,]
+test_df=df[-index,]
 
 nrow(train_df)
 nrow(test_df)
@@ -174,15 +267,24 @@ nrow(test_df)
 
 ```{r}
 #Logistic Regression
-logfit<-glm(Delivered_Ontime~., data=train_df, family=binomial)
+temp=train_df[,-8]
+logfit<-glm(Delivered_Ontime~., data=temp, family=binomial)
 summary(logfit)
 
+#y=knn.train[,"Delivered_Ontime"]
+#x=model.matrix(Delivered_Ontime~., knn.train)
+
+#lasso.cv=cv.glmnet(x, y,family='binomial', alpha=0)
+#Lasso=glmnet(x,y,family='binomial', alpha=0,lambda = lasso.cv$lambda.min)
+
+#coef(Lasso)
 ```
 
 
 2.  Obtain the confusion matrix and compute the **testing error rate** based on the logistic regression classification.
 
 ```{r}
+temp_2=test_df[,-8]
 logprob<- predict(logfit, newdata = test_df, type = "response")
 head(logprob,3)
 
@@ -201,30 +303,6 @@ cm
 #testing error
 round( mean(logpred!=test_df[,"Delivered_Ontime"]),4)
 ```
-Logistics Regression model has an accuracy of 64.41%
-#LDA
-```{r}
-#library(MASS)
-#lda_m = lda(Delivered_Ontime~., data=train_df)
-#lda_m
-
-```
-
-```{r}
-#plot(lda_m)
-```
-
-```{r}
-#lda.pred = predict(lda_m, newdata=test_df)
-
-#confusion matrix
-#table(test_df$Delivered_Ontime, lda.pred$class)
-#error rate
-#1 - mean(test_df$Delivered_Ontime==lda.pred$class)
-```
-
-LDA model has an accuracy of 64.73% 
-
 3. Explain your choices and communicate your results.
 
 
@@ -242,20 +320,20 @@ test_knn<-test_df
 
 ######## Train dataset for Knn
 #Gender: M=0, F=1
-train_knn[,"Gender"]=ifelse(train_df[,"Gender"] == "M", 0, 1)
+train_knn[,"Gender"]=ifelse(train_knn[,"Gender"] == "M", 0, 1)
 train_knn[,"Gender"]=as.factor(train_knn[,"Gender"])
 
 #Warehouse Block: A=1, B=2, C=3, D=4, E=5, F=6
-train_knn[,"Warehouse_block"]=ifelse(train_df[,"Warehouse_block"] == "A", 1, ifelse(train_df[,"Warehouse_block"] == "B",2, ifelse( train_df[,"Warehouse_block"] == "C",3,ifelse(train_df[,"Warehouse_block"] == "D",4,ifelse(train_df[,"Warehouse_block"] == "E",5,6)))))
+train_knn[,"Warehouse_block"]=ifelse(train_knn[,"Warehouse_block"] == "A", 1, ifelse(train_knn[,"Warehouse_block"] == "B",2, ifelse( train_knn[,"Warehouse_block"] == "C",3,ifelse(train_knn[,"Warehouse_block"] == "D",4,ifelse(train_knn[,"Warehouse_block"] == "E",5,6)))))
 train_knn[,"Warehouse_block"]=as.factor(train_knn[,"Warehouse_block"])
 
 
 #Mode of Shipment: Ship=1, Road=2, Flight=3
-train_knn[,"Mode_of_Shipment"]=ifelse(train_df[,"Mode_of_Shipment"] == "Ship", 1, ifelse(train_df[,"Mode_of_Shipment"] == "Road",2,3))
+train_knn[,"Mode_of_Shipment"]=ifelse(train_knn[,"Mode_of_Shipment"] == "Ship", 1, ifelse(train_knn[,"Mode_of_Shipment"] == "Road",2,3))
 train_knn[,"Mode_of_Shipment"]=as.factor(train_knn[,"Mode_of_Shipment"])
 
 #Product_importance: low=1, medium=2, high=3
-train_knn[,"Product_importance"]=ifelse(train_df[,"Product_importance"] == "low", 1, ifelse(train_df[,"Product_importance"] == "medium",2,3))                                         
+train_knn[,"Product_importance"]=ifelse(train_knn[,"Product_importance"] == "low", 1, ifelse(train_knn[,"Product_importance"] == "medium",2,3))                                         
 train_knn[,"Product_importance"]=as.factor(train_knn[,"Product_importance"])
 
 train_knn[,"Customer_rating"]=as.factor(train_knn[,"Customer_rating"])
@@ -264,19 +342,19 @@ train_knn[,"Customer_rating"]=as.factor(train_knn[,"Customer_rating"])
 
 ######## Test dataset for Knn
 #Gender: M=0, F=1
-test_knn[,"Gender"]=ifelse(test_df[,"Gender"] == "M", 0, 1)
+test_knn[,"Gender"]=ifelse(test_knn[,"Gender"] == "M", 0, 1)
 test_knn[,"Gender"]=as.factor(test_knn[,"Gender"])
 
 #Warehouse Block: A=1, B=2, C=3, D=4, E=5, F=6
-test_knn[,"Warehouse_block"]=ifelse(test_df[,"Warehouse_block"] == "A", 1, ifelse(test_df[,"Warehouse_block"] == "B",2, ifelse( test_df[,"Warehouse_block"] == "C",3,ifelse(test_df[,"Warehouse_block"] == "D",4,ifelse(test_df[,"Warehouse_block"] == "E",5,6)))))
+test_knn[,"Warehouse_block"]=ifelse(test_knn[,"Warehouse_block"] == "A", 1, ifelse(test_knn[,"Warehouse_block"] == "B",2, ifelse( test_knn[,"Warehouse_block"] == "C",3,ifelse(test_knn[,"Warehouse_block"] == "D",4,ifelse(test_knn[,"Warehouse_block"] == "E",5,6)))))
 test_knn[,"Warehouse_block"]=as.factor(test_knn[,"Warehouse_block"])
 
 #Mode of Shipment: Ship=1, Road=2, Flight=3
-test_knn[,"Mode_of_Shipment"]=ifelse(test_df[,"Mode_of_Shipment"] == "Ship", 1, ifelse(test_df[,"Mode_of_Shipment"] == "Road",2,3))
+test_knn[,"Mode_of_Shipment"]=ifelse(test_knn[,"Mode_of_Shipment"] == "Ship", 1, ifelse(test_knn[,"Mode_of_Shipment"] == "Road",2,3))
 test_knn[,"Mode_of_Shipment"]=as.factor(test_knn[,"Mode_of_Shipment"])
 
 #Product_importance: low=1, medium=2, high=3
-test_knn[,"Product_importance"]=ifelse(test_df[,"Product_importance"] == "low", 1, ifelse(test_df[,"Product_importance"] == "medium",2,3))                                         
+test_knn[,"Product_importance"]=ifelse(test_knn[,"Product_importance"] == "low", 1, ifelse(test_knn[,"Product_importance"] == "medium",2,3))                                         
 test_knn[,"Product_importance"]=as.factor(test_knn[,"Product_importance"])
 
 test_knn[,"Customer_rating"]=as.factor(test_knn[,"Customer_rating"])
@@ -289,8 +367,13 @@ knn.test=test_knn[,1:11]
 knn.trainLabels=train_knn[,"Delivered_Ontime"]
 knn.testLabels=test_knn[,"Delivered_Ontime"]
 
-#KNN model with k=3
+#KNN model with k=12
 knn1 <- knn(train = knn.train, test = knn.test, cl = knn.trainLabels, k=12)
+
+par(mfrow=c(2,2))
+library(ggvis)
+train_knn %>% ggvis(~Discount_offered, ~Cost_of_the_Product, fill = ~factor(Delivered_Ontime)) %>% layer_points()
+train_knn %>% ggvis(~Cost_of_the_Product, ~Weight_in_gms, fill = ~factor(Delivered_Ontime)) %>% layer_points()
 
 ```
 
@@ -339,7 +422,8 @@ for (i in seq_along(k.grid)) {
 }
 
 min(error)
-
+which.min(error)
+confusionMatrix(data=as.factor(pred), reference=as.factor(knn.testLabels))
 ```
 
 ```{r}
@@ -356,21 +440,115 @@ abline(h = min(error), col = "darkorange", lty = 3)
 ## Part 4: Tree Based Model (15 points)
 
 1. Apply one of the following models to your training data: *Classification Tree, Random Forrest, Bagging or Boosting*
+```{r}
+#Classification Tree
+library(rpart)
+library(rpart.plot)
+model.ct = rpart(Delivered_Ontime~., train_df, method="class", parms=list(split="gini"))
+model.ct
+rpart.plot(model.ct,roundint = FALSE)
+```
+
+```{r}
+#Prediction and confusion matrix
+tree_pred=predict(model.ct, newdata=test_df, type="class")
+library(caret)
+#Confusion matrix
+confusionMatrix(
+    factor(tree_pred, levels = 0:1),
+    factor(test_knn$Delivered_Ontime, levels = 0:1)
+)
+
+#testing error rate
+round( mean(tree_pred!=test_df[,"Delivered_Ontime"]),4)
+
+#training accuracy
+y_train_pred <- predict(model.ct, train_df, type = "class")
+confusionMatrix(
+  data=factor(y_train_pred),
+  reference=factor(train_df$Delivered_Ontime)
+)
+
+```
+
+```{r}
+#Pruned Tree
+#optimum cp
+cp_opt <- model.ct$cptable[which.min(model.ct$cptable[, "xerror"]), "CP"]
+
+# Prune the model
+model.ct_opt <- prune(tree = model.ct, cp = cp_opt)
+                          
+# Plot the optimized model
+rpart.plot(x = model.ct_opt)
+model_pred=predict(model.ct_opt, newdata=test_df, type="class")
+confusionMatrix(
+    data=factor(model_pred, levels = 0:1),
+    reference=factor(test_df$Delivered_Ontime, levels = 0:1)
+)
+
+round( mean(model_pred!=test_df[,"Delivered_Ontime"]),4)
+```
 
 ```{r}
 #random Forest
 library(randomForest)
-set.seed(1994)
-fit.forest <- randomForest(Delivered_Ontime ~., data = train_df, importance=TRUE,proximity=TRUE)
+set.seed(1234)
+fit.forest <- randomForest(Delivered_Ontime ~., data = train_df, importance=TRUE,proximity=TRUE,
+                           ntree=500, mtry=2,nodesize=10)
+
 fit.forest
 
-```
+# grid search Hyperparameter tuning for RF
+param_grid <- expand.grid(
+  ntree = c(200,300,400),
+  mtry = c(2, 4, 6),
+  nodesize = c(5, 10, 15)
+)
+
+# Initialize an empty list to store results
+results <- list()
+
+# Perform grid search
+for (i in 1:nrow(param_grid)) {
+  # Train a Random Forest model using the current set of hyperparameters
+  rf_model <- randomForest(
+    formula = Delivered_Ontime ~ .,
+    data = train_df,
+    ntree = param_grid$ntree[i],
+    mtry = param_grid$mtry[i],
+    nodesize = param_grid$nodesize[i]
+  )
+  
+  # Make predictions on the test set
+  predictions <- predict(rf_model, newdata = test_df)
+  
+  # Evaluate the model's performance (replace "accuracy" with your chosen metric)
+  accuracy <- mean(predictions == test_df$Delivered_Ontime)
+  
+  # Store the results
+  results[[i]] <- list(
+    ntree = param_grid$ntree[i],
+    mtry = param_grid$mtry[i],
+    nodesize = param_grid$nodesize[i],
+    accuracy = accuracy
+  )
+}
+
+# Identify the best hyperparameter set
+best_params <- results[[which.max(sapply(results, function(x) x$accuracy))]]
+
+# Print the best hyperparameter values
+print("Best Hyperparameters:")
+print(best_params)
+```       
 
 ```{r}
 head(fit.forest$importance,3)
 
 #OOB error matrix
 err= fit.forest$err.rate
+
 
 head(err)
 
@@ -390,54 +568,84 @@ We performed Random Forest model and the model gave us 65.09% accuracy for the p
 
 ## Part 5: SVM (15 points)
 
-1. Apply a SVM model to your training data.
+1. Apply a XG-BOOST model to your training data.
 
 ```{r}
-library(e1071)
-svm_model<- svm(Delivered_Ontime ~., data = train_df)
-svm_model
+#XGBOOST Model
+library(xgboost)
 
+#data prep
+factor_columns <- sapply(train_knn, is.factor)
+d=train_knn
+e=test_knn
+# Convert factor columns to numeric
+d[, factor_columns] <- lapply(d[, factor_columns], function(x) as.integer(x))
+d$Gender=d$Gender-1
+d$Delivered_Ontime=d$Delivered_Ontime-1
+e[, factor_columns] <- lapply(e[, factor_columns], function(x) as.integer(x))
+e$Gender=e$Gender-1
+e$Delivered_Ontime=e$Delivered_Ontime-1
 
-svm_plot=ggplot(data = train_df, aes(x = train_df, y = svm_model, color = y)) + 
-    geom_point() + 
-    scale_color_manual(values = c("red", "blue")) + 
-    geom_point(data = train_df[svm_model$index, ], aes(x = x1, y = x2), color = "purple", size = 4, alpha = 0.5)
+xgboost_train=xgb.DMatrix(data=as.matrix(d[,-11]), label=d$Delivered_Ontime)
+xgboost_test=xgb.DMatrix(data=as.matrix(e[,-11]), label=e$Delivered_Ontime)
 
-svm_plot
+#Applying model
+param <- list(
+  objective = "binary:logistic",
+  eval_metric = "logloss",
+  eta = 0.1,
+  max_depth = 3,
+  alpha = 7,    # L1 regularization term
+  gamma = 1
+)
 
+xgb_model_f <- xgboost(params = param, 
+                     data = xgboost_train, 
+                     nrounds = 1000,
+                     early_stopping_rounds = 10)
+
+#Prediction
+pred_test = predict(xgb_model_f, xgboost_test)
+y_test=e[,11]
+y_test=as.factor(y_test)
+pred_xgb = as.factor(round(pred_test))
+
+conf_mat = confusionMatrix(data=pred_xgb, reference=y_test)
+conf_mat
+
+#Prediction
+pred_train = predict(xgb_model_f, xgboost_train)
+y_train=d[,11]
+y_train=as.factor(y_train)
+pred_xgb = as.factor(round(pred_train))
+conf_mat = confusionMatrix(data=pred_xgb, reference=y_train)
+conf_mat
 ```
-
-
-2. Calculate the confusion matrix using the testing data.
-
-```{r}
-pred.svm <- predict(svm_model, test_df)
-cm.svm <- table(test_df$Delivered_Ontime, pred.svm, 
-                dnn = c("True", "Pred"))
-
-cm.svm
-
-#accuracy
-mean(pred.svm==test_df$Delivered_Ontime)
-
-#plot(svm_model,train_df)
-```
-
 
 3. Explain your choices and communicate your results.
 
 ```{r}
+library(pROC)
+library(ROCR)
+roc.test = roc(as.numeric(test_df$Delivered_Ontime) ~ as.numeric(pred_xgb), plot = TRUE, print.auc = TRUE)
+roc.test = roc(as.numeric(test_df$Delivered_Ontime) ~ as.numeric(knn1), plot = TRUE, print.auc = TRUE)
+roc.test = roc(as.numeric(test_df$Delivered_Ontime) ~ as.numeric(tree_pred), plot = TRUE, print.auc = TRUE)
+roc.test = roc(as.numeric(test_df$Delivered_Ontime) ~ as.numeric(pred), plot = TRUE, print.auc = TRUE)
+roc.test = roc(as.numeric(test_df$Delivered_Ontime) ~ as.numeric(logpred), plot = TRUE, print.auc = TRUE)
+roc.test = roc(as.numeric(test_df$Delivered_Ontime) ~ as.numeric(pred.rf), plot = TRUE, print.auc = TRUE)
+# List of predictions
+pred.list=list(logpred, knn1, pred, as.numeric(tree_pred), as.numeric(pred_xgb),pred.rf)
+
+# List of actual values
+nmod=length(pred.list)
+actual=rep(list(test_df$Delivered_Ontime), nmod)
+# Plot the ROC curves
+library(ROCR)
+pred.r=prediction(pred.list, actual)
+roc.r=performance(pred.r, "tpr", "fpr")
+plot(roc.r, col = as.list(1:nmod), main = "ROC Curves: Test Set", legacy.axes=TRUE, print.auc=TRUE)
+legend(x = "bottomright", 
+       legend = c("Logistic Regression", "KNN k=12", "KNN K=54", "Classification Tree", "XG-Boost","Random Forest"),
+       fill = 1:nmod)
 
 ```
-
-
-## Part 6: Conclusion (20 points)
-
-1. (10 points) Based on the different classification models, which one do you think is the best model to predict `y`? Please consider the following in your response:
-
-    - Accuracy/error rates
-    - Do you think you can improve the model by adding any other information?
-    
-2. (10 points) What are your learning outcomes for this assignment? Please focus on your learning outcomes in terms of statistical learning, model interpretations, and R skills - it is up to you to include this part in your presentation or not.
-
-
